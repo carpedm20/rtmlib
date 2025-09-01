@@ -7,19 +7,25 @@ def readme():
     return content
 
 
-def parse_requirements(fname="requirements.txt"):
-    """Parse the package dependencies listed in a requirements file but strips
-    specific versioning information.
+# --- FIX 1: Add back the correct get_version function ---
+version_file = "rtmlib/version.py"
 
-    Args:
-        fname (str): path to requirements file
 
-    Returns:
-        List[str]: list of requirements items
+def get_version():
+    with open(version_file, "r") as f:
+        exec(compile(f.read(), version_file, "exec"))
+    import sys
 
-    CommandLine:
-        python -c "import setup; print(setup.parse_requirements())"
-    """
+    # return short version for sdist
+    if "sdist" in sys.argv or "bdist_wheel" in sys.argv:
+        return locals()["short_version"]
+    else:
+        return locals()["__version__"]
+
+
+# --- FIX 2: Use the full, correct parse_requirements function ---
+def parse_requirements(fname="requirements.txt", with_version=True):
+    """Parse the package dependencies listed in a requirements file."""
     import re
     import sys
     from os.path import exists
@@ -39,6 +45,20 @@ def parse_requirements(fname="requirements.txt"):
                 info["package"] = line.split("#egg=")[1]
             elif "@git+" in line:
                 info["package"] = line
+            else:
+                # This is the crucial part you were missing
+                pat = "(" + "|".join([">=", "==", ">"]) + ")"
+                parts = re.split(pat, line, maxsplit=1)
+                parts = [p.strip() for p in parts]
+                info["package"] = parts[0]
+                if len(parts) > 1:
+                    op, rest = parts[1:]
+                    if ";" in rest:
+                        version, platform_deps = map(str.strip, rest.split(";"))
+                        info["platform_deps"] = platform_deps
+                    else:
+                        version = rest
+                    info["version"] = (op, version)
             yield info
 
     def parse_require_file(fpath):
@@ -53,6 +73,12 @@ def parse_requirements(fname="requirements.txt"):
         if exists(require_fpath):
             for info in parse_require_file(require_fpath):
                 parts = [info["package"]]
+                if with_version and "version" in info:
+                    parts.extend(info["version"])
+                if not sys.version.startswith("3.4"):
+                    platform_deps = info.get("platform_deps")
+                    if platform_deps is not None:
+                        parts.append(";" + platform_deps)
                 item = "".join(parts)
                 yield item
 
@@ -63,6 +89,7 @@ def parse_requirements(fname="requirements.txt"):
 if __name__ == "__main__":
     setup(
         name="rtmlib",
+        version=get_version(),
         description="A library for real-time pose estimation.",
         author="Tau-J",
         author_email="taujiang@outlook.com",
